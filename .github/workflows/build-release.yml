@@ -1,18 +1,22 @@
 name: Build Release
 
-on:
-  schedule:
-    # every day at 6am
-    - cron:  '0 6 * * *'
+# use manual run
+on: [workflow_dispatch]
 
+#on:
+#  schedule:
+#    # every day at 6am
+#    - cron:  '0 6 * * *'
+# https://dev.mysql.com/get/Downloads/MySQL-5.7/mysql-5.7.40-winx64.zip
 env:
-  MYSQL_BIN_NAME: "mysql-8.0.28-winx64"
-  MYSQL_BASE_PREBUILD_ADR: "https://dev.mysql.com/get/Downloads/MySQL-8.0/"
+  MYSQL_BIN_NAME: "mysql-5.7.40-winx64"
+  MYSQL_BASE_PREBUILD_ADR: "https://dev.mysql.com/get/Downloads/MySQL-5.7/"
   MYSQL_BIN_EXT: ".zip"
   MYSQL_FINAL_SERVER_FOLDER: "mysql-server"
   MYSQL_DEFAULT_ROOT: "cmangos"
   CACHED_FOLDER: "${{github.workspace}}\\CachedFolder"
   WORK_FOLDER: "${{github.workspace}}\\WorkFolder"
+  #WORK_FOLDER: "${{github.workspace}}"
 
 jobs:
   build:
@@ -21,45 +25,54 @@ jobs:
       contents: write
 
     steps:
-      - name: Set Environmental Variables
+      - name: Set environmental variables
         run: |
           echo "MYSQL_BIN_ARCH=${{env.MYSQL_BIN_NAME}}${{env.MYSQL_BIN_EXT}}" >> $env:GITHUB_ENV
           echo "MYSQL_PREBUILD_ADR=${{env.MYSQL_BASE_PREBUILD_ADR}}${{env.MYSQL_BIN_NAME}}${{env.MYSQL_BIN_EXT}}" >> $env:GITHUB_ENV
           $projectNames = "${{github.repository}}".Split("/")[1]
-          $expansion="${projectNames}".Split("-")[0]
-          echo "LAST_BACKUP_ADR=https://github.com/cmangos/${expansion}-db/releases/download/latest/${expansion}-all-backups.tar.gz" >> $env:GITHUB_ENV
-          echo "CORE_REPO=cmangos/mangos-${expansion}" >> $env:GITHUB_ENV
-          echo "CORE_FOLDER=${{github.workspace}}\mangos-${expansion}" >> $env:GITHUB_ENV
-          echo "DB_FOLDER=${{github.workspace}}\${expansion}-db" >> $env:GITHUB_ENV
-          echo "EXPANSION_NAME=${expansion}" >> $env:GITHUB_ENV
-          echo "PROJECT_NAME=cmangos-${expansion}" >> $env:GITHUB_ENV
-          echo "WORLD_DB_NAME=${expansion}mangos" >> $env:GITHUB_ENV
-          echo "CHAR_DB_NAME=${expansion}characters" >> $env:GITHUB_ENV
-          echo "REALM_DB_NAME=${expansion}realmd" >> $env:GITHUB_ENV
-          echo "LOGS_DB_NAME=${expansion}logs" >> $env:GITHUB_ENV
+          $expension="${projectNames}".Split("-")[0]
+          echo "LAST_BACKUP_ADR=https://github.com/cmangos/${expension}-db/releases/download/latest/${expension}-all-backups.tar.gz" >> $env:GITHUB_ENV
+          echo "CORE_REPO=celguar/mangos-${expension}" >> $env:GITHUB_ENV
+          echo "CORE_FOLDER=${{github.workspace}}\mangos-${expension}" >> $env:GITHUB_ENV
+          echo "DB_FOLDER=${{github.workspace}}\${expension}-db" >> $env:GITHUB_ENV
+          echo "EXPENSION_NAME=${expension}" >> $env:GITHUB_ENV
+          echo "PROJECT_NAME=cmangos-${expension}" >> $env:GITHUB_ENV
+          echo "WORLD_DB_NAME=${expension}mangos" >> $env:GITHUB_ENV
+          echo "CHAR_DB_NAME=${expension}characters" >> $env:GITHUB_ENV
+          echo "REALM_DB_NAME=${expension}realmd" >> $env:GITHUB_ENV
+          echo "LOGS_DB_NAME=${expension}logs" >> $env:GITHUB_ENV
+          echo "BOTS_DB_NAME=${expension}playerbots" >> $env:GITHUB_ENV
           md -Force "${{env.CACHED_FOLDER}}"
           md -Force "${{env.WORK_FOLDER}}"
-
       - name: Checkout DB
         uses: actions/checkout@v2
         with:
           path: ${{env.DB_FOLDER}}
 
-      - name: Checkout CORE
+      - name: Checkout Core
         uses: actions/checkout@v2
         with:
+          ref: ike3-bots
           repository: ${{env.CORE_REPO}}
           path: ${{env.CORE_FOLDER}}
+          # submodules: recursive
+          
+      - name: Checkout Bots
+        uses: actions/checkout@v2
+        with:
+          repository: "celguar/mangosbot-bots"
+          ref: master
+          path: "${{env.CORE_FOLDER}}/src/modules/Bots"
 
-      - name: Cache MySQL Official .zip
+      - name: Cache MySQL Server
         uses: actions/cache@v2
         id: cache-mysqldownload
         with:
           path: "${{env.CACHED_FOLDER}}"
-          key: ${{ runner.os }}-${{ hashFiles('.github/workflows/build-release.yml') }}
+          key: ${{ runner.os }}-mysql
 
       - if: steps.cache-mysqldownload.outputs.cache-hit != 'true'
-        name: Download official mysql prebuild server
+        name: Download MySQL Server
         run: |
           $MysqlArchive = Join-Path ${{env.CACHED_FOLDER}} ${{env.MYSQL_BIN_ARCH}}
           if (-not(Test-Path -Path ${MysqlArchive} -PathType Leaf))
@@ -74,14 +87,12 @@ jobs:
                 exit 1
               }
           }
-
-      - name: Extract MySQL Archive
+      - name: Extract MySQL Server
         run: |
           $MysqlArchive = Join-Path ${{env.CACHED_FOLDER}} ${{env.MYSQL_BIN_ARCH}}
           Expand-Archive -LiteralPath "${MysqlArchive}" -DestinationPath "${{env.WORK_FOLDER}}" | Out-Null
           Rename-Item "${{env.WORK_FOLDER}}\${{env.MYSQL_BIN_NAME}}" "${{env.WORK_FOLDER}}\${{env.MYSQL_FINAL_SERVER_FOLDER}}"
-
-      - name: Add Default Config Files and Batch File
+      - name: Add default config files and batch file
         run: |
           $DefaultConfFile = "# For advice on how to change settings please see`n"
           $DefaultConfFile +="# http://dev.mysql.com/doc/refman/8.0/en/server-configuration-defaults.html`n"
@@ -91,6 +102,8 @@ jobs:
           $DefaultConfFile +="basedir                           = `"${{env.MYSQL_FINAL_SERVER_FOLDER}}`"`n"
           $DefaultConfFile +="datadir                           = `"data`"`n"
           $DefaultConfFile +="port                              = 3306`n"
+          $DefaultConfFile +="key_buffer_size                   = 16M`n"
+          $DefaultConfFile +="max_allowed_packet                = 128M`n"
           $BatchFile ="@echo off`n"
           $BatchFile +="COLOR F`n"
           $BatchFile +="echo                     ***************************`n"
@@ -133,7 +146,6 @@ jobs:
           $BatchFile +="exit 0`n"
           $DefaultConfFile | Out-File -FilePath "${{env.WORK_FOLDER}}\${{env.MYSQL_FINAL_SERVER_FOLDER}}\my.ini" -Encoding ASCII
           $BatchFile | Out-File -FilePath "${{env.WORK_FOLDER}}\start-server.bat" -Encoding ASCII
-
       - name: Start MySQL Server
         run: |
           cd ${{env.WORK_FOLDER}}
@@ -164,13 +176,11 @@ jobs:
             }
             $count = $count + 1
           }
-
-      - name: Build ${{env.EXPANSION_NAME}}
+      - name: Install Full ${{env.EXPENSION_NAME}} Database
         run: |
           cd "${{env.DB_FOLDER}}"
           bash InstallFullDB.sh -InstallAll root cmangos DeleteAll
-
-      - name: Dumping All DBs
+      - name: Dump all Databases
         run: |
           $env:Path = "${{env.WORK_FOLDER}}\${{env.MYSQL_FINAL_SERVER_FOLDER}}\bin;$env:Path";
           $finalFullDBFolder="${{github.workspace}}\sql"
@@ -181,58 +191,33 @@ jobs:
           mysqldump -u root ${{env.CHAR_DB_NAME}} > "${finalFullDBFolder}\${{env.CHAR_DB_NAME}}.sql";
           mysqldump -u root ${{env.REALM_DB_NAME}} > "${finalFullDBFolder}\${{env.REALM_DB_NAME}}.sql";
           mysqldump -u root ${{env.LOGS_DB_NAME}} > "${finalFullDBFolder}\${{env.LOGS_DB_NAME}}.sql";
-
-      - name: Stopping MySQL Server
+          mysqldump -u root ${{env.BOTS_DB_NAME}} > "${finalFullDBFolder}\${{env.BOTS_DB_NAME}}.sql";
+      - name: Stop MySQL Server
         run: |
           Stop-Process -Name mysqld
           Start-Sleep -s 10
           cd "${{github.workspace}}"
-
-      - name: Download sqlite3
-        run: |
-          choco install sqlite
-
-      - name: Download gawk
-        run: |
-          choco install gawk
-
-      - name: Checkout mysql2sqlite
-        uses: actions/checkout@v2
-        with:
-          repository: dumblob/mysql2sqlite
-          path: ${{env.CORE_FOLDER}}/mysql2sqlite
-
-      - name: Convert to sqlite
-        run: |
-          $finalFullDBFolder="${{github.workspace}}\sql"
-          gawk -f "${{env.CORE_FOLDER}}/mysql2sqlite/mysql2sqlite" "${finalFullDBFolder}\${{env.WORLD_DB_NAME}}.sql" | sqlite3 "${{env.FINAL_SQL_FOLDER}}\${{env.WORLD_DB_NAME}}.sqlite"
-          gawk -f "${{env.CORE_FOLDER}}/mysql2sqlite/mysql2sqlite" "${finalFullDBFolder}\${{env.CHAR_DB_NAME}}.sql" | sqlite3 "${{env.FINAL_SQL_FOLDER}}\${{env.CHAR_DB_NAME}}.sqlite"
-          gawk -f "${{env.CORE_FOLDER}}/mysql2sqlite/mysql2sqlite" "${finalFullDBFolder}\${{env.REALM_DB_NAME}}.sql" | sqlite3 "${{env.FINAL_SQL_FOLDER}}\${{env.REALM_DB_NAME}}.sqlite"
-          gawk -f "${{env.CORE_FOLDER}}/mysql2sqlite/mysql2sqlite" "${finalFullDBFolder}\${{env.LOGS_DB_NAME}}.sql" | sqlite3 "${{env.FINAL_SQL_FOLDER}}\${{env.LOGS_DB_NAME}}.sqlite"
-
-      - name: Preparing Assets
+      - name: Prepare assets
         run: |
           md -Force "${{github.workspace}}\releases"
-          7z a -tzip "${{github.workspace}}\releases\${{env.EXPANSION_NAME}}-db-mysql-server.zip" "${{env.WORK_FOLDER}}"
-          7z a -tzip "${{github.workspace}}\releases\${{env.EXPANSION_NAME}}-world-db.zip" "${{env.FINAL_SQL_FOLDER}}\${{env.WORLD_DB_NAME}}.sql"
-          7z a -tzip "${{github.workspace}}\releases\${{env.EXPANSION_NAME}}-all-db.zip" "${{env.FINAL_SQL_FOLDER}}\*.sql"
-          7z a -tzip "${{github.workspace}}\releases\${{env.EXPANSION_NAME}}-sqlite-db.zip" "${{env.FINAL_SQL_FOLDER}}\*.sqlite"
-
-      - name: Get Current Date
+          7z a -tzip "${{github.workspace}}\releases\${{env.EXPENSION_NAME}}-db-mysql-server.zip" "${{env.WORK_FOLDER}}\*"
+          7z a -tzip "${{github.workspace}}\releases\${{env.EXPENSION_NAME}}-world-db.zip" "${{env.FINAL_SQL_FOLDER}}\${{env.WORLD_DB_NAME}}.sql"
+          7z a -tzip "${{github.workspace}}\releases\${{env.EXPENSION_NAME}}-all-db.zip" "${{env.FINAL_SQL_FOLDER}}\*.sql"
+      - name: Get current date
         id: date
         run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
 
-      - name: Upload Snapshot
+      - name: Upload snapshot
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
-          repo_token: "${{ secrets.PUSH_RELEASE_TOKEN }}"
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
           automatic_release_tag: "latest"
           prerelease: false
-          title: "Development Build(${{ steps.date.outputs.date }})"
+          title: "Development Build (${{ steps.date.outputs.date }})"
           files: releases
 
   notify-success:
-    name: Send Notification to Discord on Success
+    name: Discord release successfully notification
     runs-on: ubuntu-20.04
     permissions:
       contents: none
@@ -241,58 +226,52 @@ jobs:
       - build
 
     steps:
-      - name: Set Environmental Variables
+      - name: Set environmental variables
         run: |
           echo "GIT_BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
           echo "GIT_SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
           projectNames="${GITHUB_REPOSITORY#*/}"
-          expansion="${projectNames%-*}"
-          echo "EXPANSION_NAME=${expansion}" >> $GITHUB_ENV
-
+          expension="${projectNames%-*}"
+          echo "EXPENSION_NAME=${expension}" >> $GITHUB_ENV
       - name: Notify
         uses: rjstone/discord-webhook-notify@v1.0.4
         with:
           severity: info
+          username: ${{ github.event.repository.name }}
           description: |
-            **New ${{env.EXPANSION_NAME}}-db Prebuild Released!**
+            **${{env.EXPENSION_NAME}}-db Released**
           details: |
-            - **Branch:** `${{env.GIT_BRANCH}}`
-            - **Commit SHA:** [${{github.repository}}/${{env.GIT_SHORT_SHA}}](${{github.server_url}}/${{ github.repository }}/commit/${{github.sha}})
-            - **Exported SQL:** [Download SQL File](${{github.server_url}}/${{ github.repository }}/releases/download/latest/${{env.EXPANSION_NAME}}-all-db.zip)
-            - **Exported World SQL:** [Download SQL File](${{github.server_url}}/${{ github.repository }}/releases/download/latest/${{env.EXPANSION_NAME}}-world-db.zip)
-            - **[Preconfigured MySQL Server (Windows x64 Release)](${{github.server_url}}/${{ github.repository }}/releases/download/latest/${{env.EXPANSION_NAME}}-db-mysql-server.zip)**
-            
-            You may apply the exported and world SQL files directly to their respective databases. The `root` MySQL user password is `cmangos` - **do not forget** to change that! If you find any bugs or issues please report them [here](https://github.com/cmangos/issues/issues/new/choose).
-          footer: Created by the CMaNGOS Team!
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_RELEASE }}
+            - **All databases data (apply to databases):** [DB sql files](${{github.server_url}}/${{ github.repository }}/releases/download/latest/${{env.EXPENSION_NAME}}-all-db.zip)
+            - **World database data (apply to world db):** [World DB sql file](${{github.server_url}}/${{ github.repository }}/releases/download/latest/${{env.EXPENSION_NAME}}-world-db.zip)
+            - **Portable MySQL 5.7.40 Server for Windows (root password: cmangos):** [Download for Win x64](${{github.server_url}}/${{ github.repository }}/releases/download/latest/${{env.EXPENSION_NAME}}-db-mysql-server.zip)
+          footer: Release success
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_BUILD }}
+          avatarUrl: https://github.githubassets.com/images/modules/logos_page/Octocat.png
 
   notify-failure:
-    name: Send Notification to Discord on Failure
+    name: Discord Notification failure
     runs-on: ubuntu-20.04
     permissions:
       contents: none
     if: failure()
 
     steps:
-      - name: Set Environmental Variables
+      - name: Set environmental variables
         run: |
           echo "GIT_BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
           echo "GIT_SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-8`" >> $GITHUB_ENV
           projectNames="${GITHUB_REPOSITORY#*/}"
-          expansion="${projectNames%-*}"
-          echo "EXPANSION_NAME=${expansion}" >> $GITHUB_ENV
-
+          expension="${projectNames%-*}"
+          echo "EXPENSION_NAME=${expension}" >> $GITHUB_ENV
       - name: Notify
         uses: rjstone/discord-webhook-notify@v1.0.4
         with:
           severity: error
+          username: ${{env.EXPENSION_NAME}}-db
           description: |
-            **${{env.EXPANSION_NAME}}-db Prebuild Failed**
+            **${{env.EXPENSION_NAME}}-db Release Failed!**
           details: |
-            - **Branch:** ${{env.GIT_BRANCH}}
-            - **Pusher:** ${{github.event.pusher.name}}
-            - **Author:** ${{github.event.head_commit.author.name}}
-            - **Commit SHA:** [${{github.repository}}/${{env.GIT_SHORT_SHA}}](${{github.server_url}}/${{ github.repository }}/commit/${{github.sha}})
-            - **Build Log:** [actions/runs/${{github.run_id}}](${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}})
-          footer: CMaNGOS Developers Notified!
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+            - **Build log:** [actions/runs/${{github.run_id}}](${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}})
+          footer: Release fail
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK_BUILD }}
+          avatarUrl: https://github.githubassets.com/images/modules/logos_page/Octocat.png
